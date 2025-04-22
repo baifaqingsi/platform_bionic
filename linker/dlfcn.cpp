@@ -210,6 +210,27 @@ static unsigned gLibDlBuckets[1] = { 1 };
 static unsigned gLibDlChains[8] = { 0, 2, 3, 4, 5, 6, 7, 0 };
 
 // This is used by the dynamic linker. Every process gets these symbols for free.
+/**
+ * 
+ * libdl_info - 动态链接器的核心信息结构
+ * 
+ * 这个结构代表了libdl.so库的信息，是动态链接器的核心组件。
+ * 它提供了动态链接所需的基本功能，如dlopen、dlsym、dlclose等。
+ * 
+ * 主要特点：
+ * 1. 是动态链接器中的第一个soinfo结构
+ * 2. 在solist链表中总是第一个元素
+ * 3. 包含了动态链接所需的基本函数实现
+ * 4. 维护符号表和字符串表，用于符号查找
+ * 
+ * 结构字段说明：
+ * - name: 库名，固定为"libdl.so"
+ * - flags: 标志位，包含FLAG_LINKED表示已链接
+ * - strtab: 字符串表，存储符号名称
+ * - symtab: 符号表，存储符号信息
+ * - nbucket/nchain: 哈希表相关参数
+ * - bucket/chain: 哈希表和链，用于快速查找符号
+ */
 soinfo libdl_info = {
     "libdl.so",
 

@@ -131,6 +131,15 @@ ElfReader::~ElfReader() {
   }
 }
 
+/*
+  1. 读取ELF头
+  2. 验证ELF头
+  3. 读取程序头表
+  4. 保留地址空间
+  5. 加载段
+  6. 设置段保护
+  7. 查找程序头表
+*/
 bool ElfReader::Load() {
   return ReadElfHeader() &&
          VerifyElfHeader() &&
@@ -231,10 +240,13 @@ bool ElfReader::ReadProgramHeader() {
  * to the page-aligned size in bytes that needs to be reserved in the
  * process' address space. If there are no loadable segments, 0 is
  * returned.
+ * 
+ * 返回ELF程序头表中所有可能非连续的加载段的大小。
+ * 这对应于需要在进程地址空间中保留的页面对齐大小的字节数。
+ * 如果没有加载段，则返回0。
  *
- * If out_min_vaddr or out_max_vaddr are non-NULL, they will be
- * set to the minimum and maximum addresses of pages to be reserved,
- * or 0 if there is nothing to load.
+ * 如果out_min_vaddr或out_max_vaddr为非NULL，它们将被设置为需要保留的页面的最小和最大地址，
+ * 或者如果没有要加载的内容，则设置为0。
  */
 size_t phdr_table_get_load_size(const Elf32_Phdr* phdr_table,
                                 size_t phdr_count,
@@ -248,11 +260,13 @@ size_t phdr_table_get_load_size(const Elf32_Phdr* phdr_table,
     for (size_t i = 0; i < phdr_count; ++i) {
         const Elf32_Phdr* phdr = &phdr_table[i];
 
+        // 只处理PT_LOAD段 指linker
         if (phdr->p_type != PT_LOAD) {
             continue;
         }
         found_pt_load = true;
 
+        // 更新最小和最大虚拟地址
         if (phdr->p_vaddr < min_vaddr) {
             min_vaddr = phdr->p_vaddr;
         }
@@ -265,7 +279,9 @@ size_t phdr_table_get_load_size(const Elf32_Phdr* phdr_table,
         min_vaddr = 0x00000000U;
     }
 
+    // 页起始地址
     min_vaddr = PAGE_START(min_vaddr);
+    // 下一页起始地址
     max_vaddr = PAGE_END(max_vaddr);
 
     if (out_min_vaddr != NULL) {
@@ -306,6 +322,35 @@ bool ElfReader::ReserveAddressSpace() {
 // reserve the address space range for the library.
 // TODO: assert assumption.
 bool ElfReader::LoadSegments() {
+  /*
+  虚拟地址空间:
++------------------------+  <- seg_page_start (页面对齐的起始地址)
+|                        |
+|  文件内容部分          |  <- 第一次mmap
+|  (p_filesz)           |     - 映射ELF文件内容
+|                        |     - 使用MAP_FIXED|MAP_PRIVATE
+|                        |     - 从文件偏移file_page_start开始
++------------------------+  <- seg_file_end
+|                        |
+|  零初始化区域          |  <- 第二次mmap
+|  (p_memsz - p_filesz) |     - 映射匿名内存
+|                        |     - 使用MAP_FIXED|MAP_ANONYMOUS|MAP_PRIVATE
+|                        |     - 自动初始化为0
++------------------------+  <- seg_page_end (页面对齐的结束地址)
+
+ELF文件:
++------------------------+
+|                        |
+|  段内容               |  <- 对应第一次mmap的内容
+|  (p_filesz)           |
+|                        |
++------------------------+
+|                        |
+|  未使用空间           |  <- 这部分在内存中会被初始化为0
+|  (p_memsz - p_filesz) |
+|                        |
++------------------------+
+  */
   for (size_t i = 0; i < phdr_num_; ++i) {
     const Elf32_Phdr* phdr = &phdr_table_[i];
 
@@ -563,6 +608,7 @@ phdr_table_get_arm_exidx(const Elf32_Phdr* phdr_table,
 
 /* Return the address and size of the ELF file's .dynamic section in memory,
  * or NULL if missing.
+ * 返回elf动态段在内存的地址和大小
  *
  * Input:
  *   phdr_table  -> program header table
@@ -577,7 +623,7 @@ phdr_table_get_arm_exidx(const Elf32_Phdr* phdr_table,
  */
 void
 phdr_table_get_dynamic_section(const Elf32_Phdr* phdr_table,
-                               int               phdr_count,
+                               int               phdr_count,  // phnum
                                Elf32_Addr        load_bias,
                                Elf32_Dyn**       dynamic,
                                size_t*           dynamic_count,
@@ -587,12 +633,13 @@ phdr_table_get_dynamic_section(const Elf32_Phdr* phdr_table,
     const Elf32_Phdr* phdr_limit = phdr + phdr_count;
 
     for (phdr = phdr_table; phdr < phdr_limit; phdr++) {
+        // 只处理动态段
         if (phdr->p_type != PT_DYNAMIC) {
             continue;
         }
-
+        // 动态段运行时地址
         *dynamic = reinterpret_cast<Elf32_Dyn*>(load_bias + phdr->p_vaddr);
-        if (dynamic_count) {
+        if (dynamic_count) { //动态段由数组组成，获取数量
             *dynamic_count = (unsigned)(phdr->p_memsz / 8);
         }
         if (dynamic_flags) {

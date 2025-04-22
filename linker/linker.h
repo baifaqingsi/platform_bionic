@@ -53,15 +53,22 @@
       __libc_format_fd(2, "\n"); \
     } while (false)
 
-
 // Returns the address of the page containing address 'x'.
+// 返回包含x的页的起始地址。
 #define PAGE_START(x)  ((x) & PAGE_MASK)
 
 // Returns the offset of address 'x' in its page.
+// 返回x在页中的偏移量。
 #define PAGE_OFFSET(x) ((x) & ~PAGE_MASK)
 
 // Returns the address of the next page after address 'x', unless 'x' is
 // itself at the start of a page.
+/*
+返回包含x的页的下一个页的起始地址。若x位于页起始地址，则返回当前页起始地址。
+示例：
+x = 0x1234 → PAGE_END(x) = 0x2000（下一个页起始）
+x = 0x2000 → PAGE_END(x) = 0x2000（当前页起始）
+*/
 #define PAGE_END(x)    PAGE_START((x) + (PAGE_SIZE-1))
 
 // Magic shared structures that GDB knows about.

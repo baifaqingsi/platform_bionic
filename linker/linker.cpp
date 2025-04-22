@@ -63,6 +63,8 @@
  * corruption in the past.
  * The linker runs before we bring up libc and it's easiest
  * to make sure it does not depend on any complex libc features
+ * 
+ * linker运行在libc之前，这样能最容易确保不会依赖任何复杂的libc特性
  *
  * open issues / todo:
  *
@@ -77,6 +79,8 @@ static bool soinfo_link_image(soinfo* si);
 // We can't use malloc(3) in the dynamic linker. We use a linked list of anonymous
 // maps, each a single page in size. The pages are broken up into as many struct soinfo
 // objects as will fit, and they're all threaded together on a free list.
+// 我们不能在动态链接器中使用malloc(3)。我们使用一个链表的匿名映射，每个映射大小为单个页面。
+// 页面被分成尽可能多的struct soinfo对象，它们通过一个自由列表连接在一起。
 #define SOINFO_PER_POOL ((PAGE_SIZE - sizeof(soinfo_pool_t*)) / sizeof(soinfo))
 struct soinfo_pool_t {
   soinfo_pool_t* next;
@@ -709,7 +713,7 @@ static soinfo* load_library(const char* name) {
 
     // Read the ELF header and load the segments.
     ElfReader elf_reader(name, fd);
-    if (!elf_reader.Load()) {
+    if (!elf_reader.Load()) { // 重要函数
         return NULL;
     }
 
@@ -753,6 +757,7 @@ static soinfo* find_library_internal(const char* name) {
     return somain;
   }
 
+// 是否已经加载过，从全局链表查name
   soinfo* si = find_loaded_library(name);
   if (si != NULL) {
     if (si->flags & FLAG_LINKED) {
@@ -1305,6 +1310,7 @@ static bool soinfo_link_image(soinfo* si) {
     Elf32_Addr base = si->load_bias;
     const Elf32_Phdr *phdr = si->phdr;
     int phnum = si->phnum;
+    // true
     bool relocating_linker = (si->flags & FLAG_LINKER) != 0;
 
     /* We can't debug anything until the linker is relocated */
@@ -1316,20 +1322,22 @@ static bool soinfo_link_image(soinfo* si) {
     /* Extract dynamic section */
     size_t dynamic_count;
     Elf32_Word dynamic_flags;
+    // 获取动态段的运行时地址，数组大小，和对应的flags
     phdr_table_get_dynamic_section(phdr, phnum, base, &si->dynamic,
                                    &dynamic_count, &dynamic_flags);
-    if (si->dynamic == NULL) {
+    if (si->dynamic == NULL) { // 不执行
         if (!relocating_linker) {
             DL_ERR("missing PT_DYNAMIC in \"%s\"", si->name);
         }
         return false;
     } else {
-        if (!relocating_linker) {
+        if (!relocating_linker) { // 不执行
             DEBUG("dynamic = %p", si->dynamic);
         }
     }
 
 #ifdef ANDROID_ARM_LINKER
+    // 获取.ARM.exidx section的运行时地址，和数量
     (void) phdr_table_get_arm_exidx(phdr, phnum, base,
                                     &si->ARM_exidx, &si->ARM_exidx_count);
 #endif
@@ -1345,13 +1353,13 @@ static bool soinfo_link_image(soinfo* si) {
             si->bucket = (unsigned *) (base + d->d_un.d_ptr + 8);
             si->chain = (unsigned *) (base + d->d_un.d_ptr + 8 + si->nbucket * 4);
             break;
-        case DT_STRTAB:
+        case DT_STRTAB: // 字符串表
             si->strtab = (const char *) (base + d->d_un.d_ptr);
             break;
-        case DT_SYMTAB:
+        case DT_SYMTAB: // 符号表
             si->symtab = (Elf32_Sym *) (base + d->d_un.d_ptr);
             break;
-        case DT_PLTREL:
+        case DT_PLTREL: 
             if (d->d_un.d_val != DT_REL) {
                 DL_ERR("unsupported DT_RELA in \"%s\"", si->name);
                 return false;
@@ -1360,7 +1368,7 @@ static bool soinfo_link_image(soinfo* si) {
         case DT_JMPREL:
             si->plt_rel = (Elf32_Rel*) (base + d->d_un.d_ptr);
             break;
-        case DT_PLTRELSZ:
+        case DT_PLTRELSZ: // 重定位表大小
             si->plt_rel_count = d->d_un.d_val / sizeof(Elf32_Rel);
             break;
         case DT_REL:
@@ -1419,7 +1427,7 @@ static bool soinfo_link_image(soinfo* si) {
             si->has_DT_SYMBOLIC = true;
             break;
         case DT_NEEDED:
-            ++needed_count;
+            ++needed_count; // 依赖的so
             break;
 #if defined DT_FLAGS
         // TODO: why is DT_FLAGS not defined?
@@ -1473,6 +1481,7 @@ static bool soinfo_link_image(soinfo* si) {
           si->base, si->strtab, si->symtab);
 
     // Sanity checks.
+    // linker不能依赖
     if (relocating_linker && needed_count != 0) {
         DL_ERR("linker cannot have DT_NEEDED dependencies on other libraries");
         return false;
@@ -1791,12 +1800,23 @@ static Elf32_Addr __linker_init_post_relocation(KernelArgumentBlock& args, Elf32
 /* Compute the load-bias of an existing executable. This shall only
  * be used to compute the load bias of an executable or shared library
  * that was loaded by the kernel itself.
+ * 
+ * 计算ELF可执行文件的加载偏移量。
+ * 
+ * 
  *
  * Input:
  *    elf    -> address of ELF header, assumed to be at the start of the file.
  * Return:
  *    load bias, i.e. add the value of any p_vaddr in the file to get
  *    the corresponding address in memory.
+ * 
+ * 计算ELF可执行文件的加载偏移量。
+ * 
+ * 这个函数计算ELF可执行文件的加载偏移量，即在文件中添加任何p_vaddr的值以获取
+ * 内存中的相应地址。
+ * 
+ * 
  */
 static Elf32_Addr get_elf_exec_load_bias(const Elf32_Ehdr* elf) {
   Elf32_Addr        offset     = elf->e_phoff;
@@ -1815,27 +1835,38 @@ static Elf32_Addr get_elf_exec_load_bias(const Elf32_Ehdr* elf) {
  * This is the entry point for the linker, called from begin.S. This
  * method is responsible for fixing the linker's own relocations, and
  * then calling __linker_init_post_relocation().
- *
- * Because this method is called before the linker has fixed it's own
- * relocations, any attempt to reference an extern variable, extern
- * function, or other GOT reference will generate a segfault.
+ * 
+ * 这个方法负责修复链接器的自身重定位，然后调用__linker_init_post_relocation()
+ * 
+ * 因为此方法在链接器修复自身重定位之前被调用，任何尝试引用外部变量、外部函数或
+ * 其他GOT引用的操作都会导致段错误。
  */
 extern "C" Elf32_Addr __linker_init(void* raw_args) {
+  // 将内核传递的参数块分解为各个组成部分，以便轻松访问。包括auxv、argv、argc、envp
   KernelArgumentBlock args(raw_args);
 
+  // 获取AT_BASE地址
   Elf32_Addr linker_addr = args.getauxval(AT_BASE);
 
   Elf32_Ehdr* elf_hdr = (Elf32_Ehdr*) linker_addr;
+  // 获取程序头表地址
   Elf32_Phdr* phdr = (Elf32_Phdr*)((unsigned char*) linker_addr + elf_hdr->e_phoff);
 
+  // 创建一个soinfo结构体，用于存储链接器的信息，在linker的栈上
   soinfo linker_so;
   memset(&linker_so, 0, sizeof(soinfo));
 
+  // 设置链接器的基础地址
   linker_so.base = linker_addr;
+  // 获取所有PT_LOAD段的大小 memsz
   linker_so.size = phdr_table_get_load_size(phdr, elf_hdr->e_phnum);
+  // 获取PT_LOAD加载偏移，后续任何段的vaddr = p_vaddr + load_bias
   linker_so.load_bias = get_elf_exec_load_bias(elf_hdr);
+  // 设置动态段为NULL
   linker_so.dynamic = NULL;
+  // 设置程序头表
   linker_so.phdr = phdr;
+  // 设置程序头表的数量
   linker_so.phnum = elf_hdr->e_phnum;
   linker_so.flags |= FLAG_LINKER;
 
@@ -1846,6 +1877,8 @@ extern "C" Elf32_Addr __linker_init(void* raw_args) {
     //
     // This situation should never occur unless the linker itself
     // is corrupt.
+    // 如果链接器无法链接自身，则退出
+    // 这种情况应该永远不会发生，除非链接器本身损坏。
     exit(EXIT_FAILURE);
   }
 
