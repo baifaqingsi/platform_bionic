@@ -849,10 +849,27 @@ int do_dlclose(soinfo* si) {
 /* TODO: don't use unsigned for addrs below. It works, but is not
  * ideal. They should probably be either uint32_t, Elf32_Addr, or unsigned
  * long.
+ * 
  */
+/*
+绝对重定位 (R_386_32/R_ARM_ABS32):
+    将符号的绝对地址写入目标位置
+    用于数据段中的指针初始化
+相对重定位 (R_386_PC32/R_ARM_REL32):
+    计算符号地址与目标位置的相对偏移
+    用于代码段中的函数调用
+全局数据重定位 (R_386_GLOB_DAT/R_ARM_GLOB_DAT):
+    将符号的绝对地址写入目标位置
+    用于全局变量的访问
+跳转表重定位 (R_386_JMP_SLOT/R_ARM_JUMP_SLOT):
+    用于 PLT 表中的函数调用
+    实现延迟绑定
+
+*/
 static int soinfo_relocate(soinfo* si, Elf32_Rel* rel, unsigned count,
                            soinfo* needed[])
 {
+    // 获取符号表和字符串表
     Elf32_Sym* symtab = si->symtab;
     const char* strtab = si->strtab;
     Elf32_Sym* s;
@@ -860,8 +877,10 @@ static int soinfo_relocate(soinfo* si, Elf32_Rel* rel, unsigned count,
     soinfo* lsi;
 
     for (size_t idx = 0; idx < count; ++idx, ++rel) {
+        // 获取重定位类型和符号索引
         unsigned type = ELF32_R_TYPE(rel->r_info);
         unsigned sym = ELF32_R_SYM(rel->r_info);
+        // 计算重定位目标地址
         Elf32_Addr reloc = static_cast<Elf32_Addr>(rel->r_offset + si->load_bias);
         Elf32_Addr sym_addr = 0;
         char* sym_name = NULL;
@@ -870,8 +889,10 @@ static int soinfo_relocate(soinfo* si, Elf32_Rel* rel, unsigned count,
         if (type == 0) { // R_*_NONE
             continue;
         }
-        if (sym != 0) {
+        if (sym != 0) { 
+            // 获取符号名
             sym_name = (char *)(strtab + symtab[sym].st_name);
+            // 查找符号
             s = soinfo_do_lookup(si, sym_name, &lsi, needed);
             if (s == NULL) {
                 /* We only allow an undefined symbol if this is a weak
@@ -948,27 +969,30 @@ static int soinfo_relocate(soinfo* si, Elf32_Rel* rel, unsigned count,
 /* TODO: This is ugly. Split up the relocations by arch into
  * different files.
  */
+        // 根据重定位类型进行处理
         switch(type){
 #if defined(ANDROID_ARM_LINKER)
-        case R_ARM_JUMP_SLOT:
+        case R_ARM_JUMP_SLOT: // 跳转表重定位
             count_relocation(kRelocAbsolute);
             MARK(rel->r_offset);
             TRACE_TYPE(RELO, "RELO JMP_SLOT %08x <- %08x %s", reloc, sym_addr, sym_name);
+             // 将符号地址写入目标位置
             *reinterpret_cast<Elf32_Addr*>(reloc) = sym_addr;
             break;
-        case R_ARM_GLOB_DAT:
+        case R_ARM_GLOB_DAT: // 全局数据重定位
             count_relocation(kRelocAbsolute);
             MARK(rel->r_offset);
             TRACE_TYPE(RELO, "RELO GLOB_DAT %08x <- %08x %s", reloc, sym_addr, sym_name);
+            // 将符号地址写入目标位置
             *reinterpret_cast<Elf32_Addr*>(reloc) = sym_addr;
             break;
-        case R_ARM_ABS32:
+        case R_ARM_ABS32: // 绝对地址重定位
             count_relocation(kRelocAbsolute);
             MARK(rel->r_offset);
             TRACE_TYPE(RELO, "RELO ABS %08x <- %08x %s", reloc, sym_addr, sym_name);
             *reinterpret_cast<Elf32_Addr*>(reloc) += sym_addr;
             break;
-        case R_ARM_REL32:
+        case R_ARM_REL32: // 相对地址重定位
             count_relocation(kRelocRelative);
             MARK(rel->r_offset);
             TRACE_TYPE(RELO, "RELO REL32 %08x <- %08x - %08x %s",
@@ -976,7 +1000,7 @@ static int soinfo_relocate(soinfo* si, Elf32_Rel* rel, unsigned count,
             *reinterpret_cast<Elf32_Addr*>(reloc) += sym_addr - rel->r_offset;
             break;
 #elif defined(ANDROID_X86_LINKER)
-        case R_386_JMP_SLOT:
+        case R_386_JMP_SLOT: 
             count_relocation(kRelocAbsolute);
             MARK(rel->r_offset);
             TRACE_TYPE(RELO, "RELO JMP_SLOT %08x <- %08x %s", reloc, sym_addr, sym_name);
